@@ -1,9 +1,9 @@
+// app.tsx
 'use client'
 
 import { useState, FormEvent, useRef, useEffect } from 'react';
 import Head from 'next/head';
 
-// تعريف الأنواع
 type VerificationStep = {
   method: string;
   success: boolean;
@@ -34,6 +34,41 @@ export default function InstagramMentionBot() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // دالة لاستخراج أسماء المستخدمين من أي بنية JSON
+  const extractUsernames = (data: any): string[] => {
+    if (Array.isArray(data)) {
+      return data;
+    }
+    
+    if (typeof data === 'object' && data !== null) {
+      // البحث عن أول خاصية مصفوفة في الكائن
+      for (const key in data) {
+        if (Array.isArray(data[key])) {
+          return data[key];
+        }
+      }
+      
+      // البحث عن أي مصفوفة متداخلة
+      const findArray = (obj: any): string[] | null => {
+        for (const key in obj) {
+          if (Array.isArray(obj[key])) {
+            return obj[key];
+          }
+          if (typeof obj[key] === 'object') {
+            const result = findArray(obj[key]);
+            if (result) return result;
+          }
+        }
+        return null;
+      };
+      
+      const nestedArray = findArray(data);
+      if (nestedArray) return nestedArray;
+    }
+    
+    throw new Error('لا يمكن استخراج أسماء المستخدمين من الملف. التنسيق غير مدعوم.');
+  };
+
   // استيراد المستخدمين من ملف
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -41,8 +76,48 @@ export default function InstagramMentionBot() {
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setUsers(content);
+      try {
+        const content = event.target?.result as string;
+        
+        // التحقق من نوع الملف
+        if (file.name.endsWith('.json')) {
+          const jsonData = JSON.parse(content);
+          const usernames = extractUsernames(jsonData);
+          setUsers(usernames.join('\n'));
+          
+          setStatus({
+            message: `تم استيراد ${usernames.length} مستخدم بنجاح من ملف JSON`,
+            details: `تم العثور على مستخدمين: ${usernames.slice(0, 5).join(', ')}${usernames.length > 5 ? '...' : ''}`
+          });
+        } else {
+          // معالجة الملفات النصية
+          setUsers(content);
+          const lines = content.split('\n').filter(l => l.trim());
+          setStatus({
+            message: `تم استيراد ${lines.length} مستخدم بنجاح من ملف نصي`,
+            details: `المستخدمون: ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? '...' : ''}`
+          });
+        }
+      } catch (error: any) {
+        setStatus({
+          message: `خطأ في قراءة الملف: ${error.message}`,
+          details: 'تأكد من تنسيق الملف'
+        });
+      } finally {
+        // إعادة تعيين قيمة المدخل للسماح بتحميل نفس الملف مرة أخرى
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    };
+    reader.onerror = () => {
+      setStatus({
+        message: 'حدث خطأ أثناء قراءة الملف',
+        details: 'تأكد من أن الملف غير تالف'
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     };
     reader.readAsText(file);
   };
@@ -54,11 +129,16 @@ export default function InstagramMentionBot() {
     setStatus(null);
     
     try {
+      const userList = users.split('\n').filter(u => u.trim());
+      if (userList.length === 0) {
+        throw new Error('لم يتم إدخال أي مستخدمين');
+      }
+      
       const response = await fetch('/api/mentions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          users: users.split('\n').filter(u => u.trim()),
+          users: userList,
           postUrl
         })
       });
@@ -81,25 +161,12 @@ export default function InstagramMentionBot() {
 
   return (
     <>
-      {/* SEO Meta Tags */}
       <Head>
         <title>بوت ذكر المستخدمين في إنستغرام | أتمتة التعليقات</title>
         <meta 
           name="description" 
-          content="أداة لأتمتة ذكر المستخدمين في تعليقات إنستغرام. قم بإدخال قائمة المستخدمين ورابط المنشور، وسيقوم البوت بالذكر تلقائيًا." 
+          content="أداة لأتمتة ذكر المستخدمين في تعليقات إنستغرام. قم بإدخال قائمة المستخدمين من ملف JSON أو نصي، وسيقوم البوت بالذكر تلقائيًا." 
         />
-        <meta name="keywords" content="إنستغرام, بوت, أتمتة, ذكر, تعليقات, Instagram, bot, automation" />
-        <meta name="author" content="Your Company" />
-        <meta property="og:title" content="بوت ذكر المستخدمين في إنستغرام" />
-        <meta property="og:description" content="أداة لأتمتة ذكر المستخدمين في تعليقات إنستغرام" />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://yourdomain.com" />
-        <meta property="og:image" content="https://yourdomain.com/og-image.jpg" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="بوت ذكر المستخدمين في إنستغرام" />
-        <meta name="twitter:description" content="أداة لأتمتة ذكر المستخدمين في تعليقات إنستغرام" />
-        <meta name="twitter:image" content="https://yourdomain.com/twitter-image.jpg" />
-        <link rel="canonical" href="https://yourdomain.com" />
       </Head>
 
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 py-8 px-4 sm:px-6">
@@ -109,7 +176,7 @@ export default function InstagramMentionBot() {
               بوت ذكر المستخدمين في إنستغرام
             </h1>
             <p className="mt-3 text-lg text-gray-600 max-w-2xl mx-auto">
-              أضف قائمة المستخدمين ورابط المنشور، وسيقوم البوت بذكرهم في تعليق واحد تلقائياً
+              أضف قائمة المستخدمين من ملف JSON أو نصي، ورابط المنشور، وسيقوم البوت بذكرهم في تعليق واحد تلقائياً
             </p>
           </header>
 
@@ -127,10 +194,10 @@ export default function InstagramMentionBot() {
                     <div className="mt-2 text-sm text-yellow-700">
                       <ul className="list-disc pl-5 space-y-1">
                         <li>تأكد أن الحساب ليس خاصاً وأن المنشور عام</li>
-                        <li>لا تستخدم البوت أكثر من 5 مرات في الساعة لتجنب الحظر</li>
+                        <li>ملفات JSON يجب أن تحتوي على مصفوفة أسماء مستخدمين</li>
+<li>يمكن استخدام التنسيقات: ["user1", "user2"] أو &lbrace;"users": ["user1", "user2"]&rbrace;</li>
+                        <li>تأكد من صحة بناء الجملة في ملف JSON</li>
                         <li>أضف 10-15 مستخدم فقط في كل تعليق لضمان النشر</li>
-                        <li>تأكد من صحة بيانات تسجيل الدخول في ملف .env.local</li>
-                        <li>إذا واجهتك مشاكل، جرب تقليل عدد المستخدمين</li>
                       </ul>
                     </div>
                   </div>
@@ -165,7 +232,7 @@ export default function InstagramMentionBot() {
                     required
                     aria-describedby="usersHelp"
                   />
-                  <p id="usersHelp" className="mt-2 text-sm text-gray-500">أدخل أسماء المستخدمين، كل اسم في سطر جديد</p>
+                  <p id="usersHelp" className="mt-2 text-sm text-gray-500">أدخل أسماء المستخدمين، كل اسم في سطر جديد أو استورد من ملف</p>
                   <div className="mt-2 flex flex-col sm:flex-row gap-3">
                     <button
                       type="button"
@@ -176,7 +243,7 @@ export default function InstagramMentionBot() {
                       <svg className="inline mr-2 -mt-1 w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
                       </svg>
-                      استيراد من ملف
+                      استيراد من ملف (TXT/JSON)
                     </button>
                     <button
                       type="button"
@@ -193,7 +260,7 @@ export default function InstagramMentionBot() {
                       type="file"
                       ref={fileInputRef}
                       className="hidden"
-                      accept=".txt,.csv"
+                      accept=".txt,.json"
                       onChange={handleFileUpload}
                       aria-label="اختر ملف لاستيراد المستخدمين"
                     />
@@ -252,17 +319,17 @@ export default function InstagramMentionBot() {
               {status && (
                 <section aria-live="polite" className="mt-8">
                   <div className={`p-4 rounded-lg mb-6 ${
-                    status.message.includes('تم نشر') ? 'bg-green-50 border border-green-200' : 
-                    status.message.includes('حدث خطأ') ? 'bg-red-50 border border-red-200' : 
+                    status.message.includes('تم نشر') || status.message.includes('استيراد') ? 'bg-green-50 border border-green-200' : 
+                    status.message.includes('حدث خطأ') || status.message.includes('خطأ') ? 'bg-red-50 border border-red-200' : 
                     'bg-blue-50 border border-blue-200'
                   }`}>
                     <div className="flex items-center">
                       <div className="flex-shrink-0">
-                        {status.message.includes('تم نشر') ? (
+                        {status.message.includes('تم نشر') || status.message.includes('استيراد') ? (
                           <svg className="h-5 w-5 text-green-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                           </svg>
-                        ) : status.message.includes('حدث خطأ') ? (
+                        ) : status.message.includes('حدث خطأ') || status.message.includes('خطأ') ? (
                           <svg className="h-5 w-5 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                           </svg>
@@ -274,15 +341,16 @@ export default function InstagramMentionBot() {
                       </div>
                       <div className="ml-3">
                         <h2 className={`text-sm font-medium ${
-                          status.message.includes('تم نشر') ? 'text-green-800' : 
-                          status.message.includes('حدث خطأ') ? 'text-red-800' : 
+                          status.message.includes('تم نشر') || status.message.includes('استيراد') ? 'text-green-800' : 
+                          status.message.includes('حدث خطأ') || status.message.includes('خطأ') ? 'text-red-800' : 
                           'text-blue-800'
                         }`}>
-                          {status.message.includes('تم نشر') ? 'نجحت العملية' : 
-                          status.message.includes('حدث خطأ') ? 'حدث خطأ' : 'تنبيه'}
+                          {status.message.includes('تم نشر') || status.message.includes('استيراد') ? 'نجحت العملية' : 
+                          status.message.includes('حدث خطأ') || status.message.includes('خطأ') ? 'حدث خطأ' : 'تنبيه'}
                         </h2>
                         <div className="mt-1 text-sm text-gray-700">
                           {status.message}
+                          {status.details && <p className="mt-1 text-xs text-gray-500">{status.details}</p>}
                         </div>
                       </div>
                     </div>
@@ -354,11 +422,22 @@ export default function InstagramMentionBot() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <h3 className="font-medium text-gray-900">نصائح تقنية</h3>
+                <h3 className="font-medium text-gray-900">تنسيقات JSON المدعومة</h3>
               </div>
-              <p className="text-gray-600 text-sm">
-                تأكد من تثبيت متصفحات Playwright باستخدام الأمر npx playwright install
-              </p>
+              <div className="text-gray-600 text-sm space-y-2">
+                <div className="p-2 bg-gray-50 rounded-md">
+                  <code className="text-xs block">["user1", "user2", "user3"]</code>
+                  <p className="mt-1">مصفوفة مباشرة</p>
+                </div>
+                <div className="p-2 bg-gray-50 rounded-md">
+                  <code className="text-xs block">{"{ \"users\": [\"user1\", \"user2\"] }"}</code>
+                  <p className="mt-1">كائن بمفتاح "users"</p>
+                </div>
+                <div className="p-2 bg-gray-50 rounded-md">
+                  <code className="text-xs block">{"{ \"data\": [\"user1\", \"user2\"] }"}</code>
+                  <p className="mt-1">كائن بمفتاح "data"</p>
+                </div>
+              </div>
             </div>
             
             <div className="bg-white p-5 rounded-lg shadow-md">
@@ -372,6 +451,9 @@ export default function InstagramMentionBot() {
               </div>
               <p className="text-gray-600 text-sm">
                 لا تشارك ملف .env.local الذي يحتوي على بيانات تسجيل الدخول
+              </p>
+              <p className="mt-2 text-gray-600 text-sm">
+                يتم معالجة الملفات فقط في المتصفح ولا يتم رفعها إلى الخادم
               </p>
             </div>
             
@@ -387,6 +469,11 @@ export default function InstagramMentionBot() {
               <p className="text-gray-600 text-sm">
                 عند النشر على Vercel، تأكد من إضافة متغيرات البيئة في الإعدادات
               </p>
+              <div className="mt-2 p-2 bg-gray-50 rounded-md">
+                <code className="text-xs block">IG_USERNAME=your_username</code>
+                <code className="text-xs block mt-1">IG_PASSWORD=your_password</code>
+                <code className="text-xs block mt-1">MAX_MENTIONS=10</code>
+              </div>
             </div>
           </aside>
 

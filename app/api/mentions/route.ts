@@ -17,20 +17,22 @@ interface ResponseData {
   message: string;
   details?: string;
   verificationSteps?: VerificationStep[];
-  screenshot?: string;
+  screenshots?: string[];
 }
 
 export async function POST(request: Request) {
   const { users, postUrl }: RequestBody = await request.json();
-  const maxMentions = parseInt(process.env.MAX_MENTIONS || '10', 10);
+  const maxMentionsPerComment = 2; // تغيير إلى 4 مستخدمين لكل تعليق
+  const totalUsers = users.length;
   let browser: any = null;
   let page: any = null;
   const verificationSteps: VerificationStep[] = [];
+  const screenshots: string[] = [];
 
   try {
-    // 1. تشغيل المتصفح
+    console.log("Launching browser...");
     browser = await chromium.launch({
-      headless: true,
+      headless: false,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -40,7 +42,7 @@ export async function POST(request: Request) {
       timeout: 60000
     });
 
-    // 2. إعداد السياق
+    console.log("Creating new context...");
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
       viewport: { width: 1280, height: 720 },
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
 
     page = await context.newPage();
     
-    // 3. تسجيل الدخول
+    // تسجيل الدخول
     verificationSteps.push({
       method: 'تسجيل الدخول',
       success: true,
@@ -74,8 +76,8 @@ export async function POST(request: Request) {
       success: true,
       message: 'تم تسجيل الدخول بنجاح'
     });
-    
-    // 4. الانتقال إلى المنشور
+
+    // الانتقال إلى المنشور
     verificationSteps.push({
       method: 'الذهاب إلى المنشور',
       success: true,
@@ -87,17 +89,19 @@ export async function POST(request: Request) {
       timeout: 60000
     });
     
+    console.log("✅ Post loaded successfully");
     verificationSteps.push({
       method: 'الذهاب إلى المنشور',
       success: true,
       message: 'تم تحميل المنشور بنجاح'
     });
 
-    // 5. التعامل مع أي تحذيرات
+    // التعامل مع التحذيرات
     try {
       const warning = await page.waitForSelector('text=/suspicious activity|automated behavior/i', { timeout: 10000 });
       
       if (warning) {
+        console.log("⚠️ Warning detected, handling...");
         const notMeButton = await page.$('text=/This Wasn\'t Me/i');
         if (notMeButton) {
           await notMeButton.click();
@@ -127,63 +131,125 @@ export async function POST(request: Request) {
       });
     }
 
-    // 6. كتابة التعليق
-    await page.waitForSelector('textarea[aria-label="Add a comment…"]', { 
-      timeout: 20000,
-      state: 'visible'
-    });
-    
-    const commentArea = await page.$('textarea[aria-label="Add a comment…"]');
-    if (!commentArea) throw new Error('تعذر العثور على مربع التعليق');
-    
-    await commentArea.click();
-    
-    const usersToMention = users.slice(0, maxMentions);
-    for (const user of usersToMention) {
-      await page.type('textarea[aria-label="Add a comment…"]', `@${user} `, { delay: 100 });
-      await page.waitForTimeout(800);
+    // تقسيم المستخدمين إلى مجموعات (كل مجموعة 4 مستخدمين)
+    const userGroups: string[][] = [];
+    for (let i = 0; i < totalUsers; i += maxMentionsPerComment) {
+      userGroups.push(users.slice(i, i + maxMentionsPerComment));
     }
-    
-    verificationSteps.push({
-      method: 'كتابة التعليق',
-      success: true,
-      message: `تم كتابة ${usersToMention.length} مستخدم في التعليق`
-    });
 
-    // 7. إرسال التعليق
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(5000);
-    
-    verificationSteps.push({
-      method: 'إرسال التعليق',
-      success: true,
-      message: 'تم الضغط على Enter لإرسال التعليق'
-    });
+    const totalGroups = userGroups.length;
+    let successfulComments = 0;
 
-    // 8. التحقق من نشر التعليق
-    const commentSuccess = await verifyCommentPublished(page, usersToMention, verificationSteps);
+    console.log(`Processing ${totalGroups} comment groups...`);
+    console.log(`Total users: ${totalUsers}`);
+    console.log(`Users per comment: ${maxMentionsPerComment}`);
+
+    // التعليق لكل مجموعة
+    for (let groupIndex = 0; groupIndex < totalGroups; groupIndex++) {
+      const group = userGroups[groupIndex];
+      console.log(`\n--- Processing group ${groupIndex + 1}/${totalGroups} ---`);
+      console.log(`Mentioning users: ${group.join(', ')}`);
+      
+      try {
+        verificationSteps.push({
+          method: 'بدء التعليق',
+          success: true,
+          message: `جاري التعليق بالمجموعة ${groupIndex + 1}/${totalGroups} (${group.length} مستخدمين)`
+        });
+
+        // البحث عن مربع التعليق
+        console.log("Waiting for comment box...");
+        await page.waitForSelector('textarea[aria-label="Add a comment…"]', { 
+          timeout: 20000,
+          state: 'visible'
+        });
+        
+        const commentArea = await page.$('textarea[aria-label="Add a comment…"]');
+        if (!commentArea) throw new Error('Comment box not found');
+        
+        await commentArea.click();
+        console.log("Comment box focused");
+        
+        // كتابة التعليق
+        console.log("Typing mentions...");
+        for (const user of group) {
+          await page.type('textarea[aria-label="Add a comment…"]', `@${user} `, { delay: 100 });
+          await page.waitForTimeout(500);
+          console.log(`Mentioned: @${user}`);
+        }
+        
+        // إرسال التعليق
+        console.log("Sending comment...");
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(5000);
+        console.log("✅ Comment sent");
+        
+        // التحقق من النشر
+        const commentSuccess = await verifyCommentPublished(page, group, verificationSteps);
+        
+        if (commentSuccess) {
+          successfulComments++;
+          verificationSteps.push({
+            method: 'إرسال التعليق',
+            success: true,
+            message: `تم نشر التعليق للمجموعة ${groupIndex + 1}/${totalGroups}`
+          });
+          
+          const screenshot = await captureScreenshot(page);
+          if (screenshot) screenshots.push(screenshot);
+        } else {
+          verificationSteps.push({
+            method: 'إرسال التعليق',
+            success: false,
+            message: `فشل التحقق من نشر التعليق للمجموعة ${groupIndex + 1}/${totalGroups}`
+          });
+        }
+
+        // انتظار عشوائي بين التعليقات
+        const randomWait = Math.floor(Math.random() * 5000) + 5000;
+        console.log(`Waiting ${randomWait/1000} seconds before next comment...`);
+        await page.waitForTimeout(randomWait);
+
+      } catch (groupError: any) {
+        console.error(`❌ Error in group ${groupIndex + 1}: ${groupError.message}`);
+        verificationSteps.push({
+          method: 'معالجة المجموعة',
+          success: false,
+          message: `خطأ في المجموعة ${groupIndex + 1}: ${groupError.message}`
+        });
+      }
+    }
+
+    // النتيجة النهائية
+    console.log(`\nProcessing completed!`);
+    console.log(`Successful comments: ${successfulComments}/${totalGroups}`);
     
-    if (commentSuccess) {
+    if (successfulComments > 0) {
       return NextResponse.json({ 
-        message: `تم نشر التعليق بنجاح! تم ذكر ${usersToMention.length} مستخدم`,
+        message: `تم نشر ${successfulComments}/${totalGroups} تعليقات بنجاح!`,
+        details: `تمت معالجة ${totalUsers} مستخدم`,
         verificationSteps,
-        screenshot: await captureScreenshot(page)
+        screenshots
       });
     } else {
-      throw new Error('فشل التحقق من نشر التعليق على المنشور');
+      throw new Error('Failed to publish all comments');
     }
 
   } catch (error: any) {
+    console.error(`❌ Global error: ${error.message}`);
     verificationSteps.push({
       method: 'المعالجة العامة',
       success: false,
       message: error.message || 'حدث خطأ غير معروف'
     });
     
+    const screenshot = await captureScreenshot(page);
+    if (screenshot) screenshots.push(screenshot);
+    
     return NextResponse.json({ 
-      message: `حدث خطأ: ${error.message || 'فشل في نشر التعليق'}`,
+      message: `حدث خطأ: ${error.message || 'فشل في نشر التعليقات'}`,
       verificationSteps,
-      screenshot: await captureScreenshot(page)
+      screenshots
     }, { 
       status: 500 
     });
@@ -191,47 +257,58 @@ export async function POST(request: Request) {
   } finally {
     if (page) await page.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});
+    console.log("Browser closed");
   }
 }
 
-// دالة للتحقق من نشر التعليق
 async function verifyCommentPublished(page: any, users: string[], steps: VerificationStep[]): Promise<boolean> {
-  let success = false;
-  
   try {
+    console.log("Verifying comment publication...");
+    
+    // التحقق من إفراغ مربع التعليق
     const commentValue = await page.$eval('textarea[aria-label="Add a comment…"]', (el: HTMLTextAreaElement) => el.value);
+    
     if (commentValue === '') {
+      console.log("✅ Comment box cleared");
       steps.push({
         method: 'التحقق من نشر التعليق',
         success: true,
-        message: 'مربع التعليق فارغ بعد النشر'
+        message: 'تم إفراغ مربع التعليق بعد النشر'
       });
-      success = true;
-    } else {
-      steps.push({
-        method: 'التحقق من نشر التعليق',
-        success: false,
-        message: `مربع التعليق غير فارغ: ${commentValue}`
-      });
+      return true;
     }
+    
+    // التحقق من ظهور التعليق
+    const commentSelector = users.map(user => `:has-text("${user}")`).join('');
+    await page.waitForSelector(`div[role="dialog"] ${commentSelector}`, { timeout: 10000 });
+    
+    console.log("✅ Comment visible in post");
+    steps.push({
+      method: 'التحقق من نشر التعليق',
+      success: true,
+      message: 'تم العثور على التعليق في المنشور'
+    });
+    return true;
+    
   } catch (error: any) {
+    console.error(`❌ Verification failed: ${error.message}`);
     steps.push({
       method: 'التحقق من نشر التعليق',
       success: false,
-      message: `خطأ في التحقق: ${error.message}`
+      message: `فشل التحقق: ${error.message}`
     });
+    return false;
   }
-  
-  return success;
 }
 
-// دالة لالتقاط لقطة شاشة
 async function captureScreenshot(page: any): Promise<string | null> {
   if (!page) return null;
   try {
+    console.log("Capturing screenshot...");
     const screenshotBuffer = await page.screenshot({ fullPage: true });
     return screenshotBuffer.toString('base64');
   } catch (error) {
+    console.error("Failed to capture screenshot");
     return null;
   }
 }
