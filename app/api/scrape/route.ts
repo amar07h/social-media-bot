@@ -102,6 +102,7 @@ export async function POST(request: NextRequest) {
     console.error('❌ Error:', error.message);
     if (browser) {
       console.log('⌛ Attempting to close browser after error...');
+    // @ts-ignore
       await browser.close().catch(e => console.error('❌ Failed to close browser:', e));
     }
     return NextResponse.json({
