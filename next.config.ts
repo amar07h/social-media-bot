@@ -14,7 +14,6 @@ const nextConfig: NextConfig = {
   },
   // إعدادات إضافية
   reactStrictMode: true,
-  swcMinify: true,
   images: {
     domains: ['instagram.com'],
   },
